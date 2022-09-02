@@ -1,0 +1,8 @@
+[package]
+edition = "2021"
+name = "truth"
+version = "0.1.0"
+
+[dependencies]
+chumsky = "0.8"
+indexmap = "1"
