@@ -179,9 +179,11 @@ fn parser() -> impl Parser<char, Ast<Span>, Error = Error> {
 				.or(expr2.clone())
 		};
 		expr1()
-			.then(binary_op())
-			.then(expr1())
-			.map_with_span(|((left, op), right), span| Ast::Binary(span, op, Box::new((left, right))))
+			.then(binary_op().then(expr1()).map(Some).or(empty().to(None)))
+			.map_with_span(|(left, right), span| match right {
+				Some((op, right)) => Ast::Binary(span, op, Box::new((left, right))),
+				None => left,
+			})
 	})
 }
 
