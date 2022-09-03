@@ -194,12 +194,12 @@ fn main() {
 		.map(|(ast, raw)| {
 			ast.map_span(|span| {
 				raw[span]
-					.replace('&', r"\wedge")
-					.replace('|', r"\vee")
-					.replace('^', r"\oplus")
-					.replace('!', r"\neg")
-					.replace("<->", r"\leftrightarrow") // must be before `->` replacement
-					.replace("->", r"\rightarrow")
+					.replace('&', r"\wedge ")
+					.replace('|', r"\vee ")
+					.replace('^', r"\oplus ")
+					.replace('!', r"\neg ")
+					.replace("<->", r"\leftrightarrow ") // must be before `->` replacement
+					.replace("->", r"\rightarrow ")
 					.replace('(', r"\left( ")
 					.replace(')', r" \right)")
 					.replace("NAND", r"\mid ")
