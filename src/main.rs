@@ -44,6 +44,8 @@ enum BinaryOperator {
 	Xor,
 	If,
 	IfAndOnlyIf,
+	Nand,
+	Nor,
 }
 
 impl BinaryOperator {
@@ -54,6 +56,8 @@ impl BinaryOperator {
 			Self::Xor => a ^ b,
 			Self::If => !a | b,
 			Self::IfAndOnlyIf => a == b,
+			Self::Nand => !(a & b),
+			Self::Nor => !(a | b),
 		}
 	}
 }
@@ -151,6 +155,8 @@ fn binary_op() -> impl Parser<char, BinaryOperator, Error = Error> {
 		just("^").to(BinaryOperator::Xor),
 		just("->").to(BinaryOperator::If),
 		just("<->").to(BinaryOperator::IfAndOnlyIf),
+		just("NAND").to(BinaryOperator::Nand),
+		just("NOR").to(BinaryOperator::Nor),
 	))
 	.padded()
 }
@@ -195,6 +201,8 @@ fn main() {
 					.replace("->", r"\rightarrow")
 					.replace('(', r"\left( ")
 					.replace(')', r" \right)")
+					.replace("NAND", r"\mid ")
+					.replace("NOR", r"\downarrow ")
 			})
 		})
 		.collect();
