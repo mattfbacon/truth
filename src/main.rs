@@ -168,11 +168,10 @@ fn unary_op() -> impl Parser<char, UnaryOperator, Error = Error> {
 fn parser() -> impl Parser<char, Ast<Span>, Error = Error> {
 	recursive(|expr0| {
 		let expr2 = choice((
-			text::ident()
-				.map_with_span(|name, span| Ast::Proposition(span, name))
-				.padded(),
+			text::ident().map_with_span(|name, span| Ast::Proposition(span, name)),
 			expr0.clone().delimited_by(just("("), just(")")).padded(),
-		));
+		))
+		.padded();
 		let expr1 = || {
 			unary_op()
 				.then(expr2.clone())
