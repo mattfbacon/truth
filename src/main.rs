@@ -237,7 +237,11 @@ fn print_header<'a>(
 	let num_fragments = fragments.len();
 
 	print!(r"\begin{{tabular}}{{");
-	for _ in 0..(num_propositions + num_fragments) {
+	for _ in 0..num_propositions {
+		print!("c ");
+	}
+	print!("| ");
+	for _ in 0..num_fragments {
 		print!("c ");
 	}
 	println!(r"}}");
@@ -249,7 +253,7 @@ fn print_header<'a>(
 		let repr = fragment.repr();
 		print!("${}$", repr);
 		if i == num_fragments - 1 {
-			println!(r"\\");
+			println!(r" \\");
 		} else {
 			print!(" & ");
 		}
@@ -269,7 +273,7 @@ fn print_row<'a>(
 	for (i, fragment) in fragments.enumerate() {
 		print!("{}", tf(fragment.evaluate(context)));
 		if i == num_fragments - 1 {
-			println!(r"\\");
+			println!(r" \\");
 		} else {
 			print!(" & ");
 		}
