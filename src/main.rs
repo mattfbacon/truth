@@ -22,7 +22,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::ops::Range;
 
 use chumsky::prelude::*;
-use indexmap::{indexset, IndexSet};
+use indexmap::IndexSet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum UnaryOperator {
@@ -58,41 +58,56 @@ impl BinaryOperator {
 	}
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum Ast {
-	Proposition(Range<usize>, String),
-	Unary(Range<usize>, UnaryOperator, Box<Self>),
-	Binary(Range<usize>, BinaryOperator, Box<(Self, Self)>),
+type Span = Range<usize>;
+type Error = Simple<char, Span>;
+
+#[derive(Debug, Clone, derivative::Derivative)]
+#[derivative(PartialEq, Eq, Hash)]
+enum Ast<S> {
+	Proposition(
+		#[derivative(PartialEq = "ignore", Hash = "ignore")] S,
+		String,
+	),
+	Unary(
+		#[derivative(PartialEq = "ignore", Hash = "ignore")] S,
+		UnaryOperator,
+		Box<Self>,
+	),
+	Binary(
+		#[derivative(PartialEq = "ignore", Hash = "ignore")] S,
+		BinaryOperator,
+		Box<(Self, Self)>,
+	),
 }
 
-impl Ast {
-	fn split_for_table(&self) -> (BTreeSet<&str>, IndexSet<&Self>) {
+impl<S> Ast<S> {
+	fn split_for_table<'a, I: Iterator<Item = &'a Ast<S>> + DoubleEndedIterator>(
+		asts: impl IntoIterator<IntoIter = I>,
+	) -> (BTreeSet<&'a str>, IndexSet<&'a Self>) {
+		let mut fragments = IndexSet::new();
 		let mut propositions = BTreeSet::<&str>::new();
-		let mut fragments = indexset![self];
-		let mut stack = vec![self];
-		while let Some(node) = stack.pop() {
-			match node {
-				Self::Proposition(_span, proposition) => {
-					propositions.insert(proposition);
-				}
-				Self::Unary(_span, _op, child) => {
-					fragments.insert(node);
-					stack.push(child);
-				}
-				Self::Binary(_span, _op, children) => {
-					fragments.insert(node);
-					stack.extend([&children.0, &children.1]);
+
+		for ast in asts.into_iter().rev() {
+			fragments.insert(ast);
+			let mut stack: Vec<_> = vec![ast];
+			while let Some(node) = stack.pop() {
+				match node {
+					Self::Proposition(_span, proposition) => {
+						propositions.insert(proposition);
+					}
+					Self::Unary(_span, _op, child) => {
+						fragments.insert(node);
+						stack.push(child);
+					}
+					Self::Binary(_span, _op, children) => {
+						fragments.insert(node);
+						stack.extend([&children.0, &children.1]);
+					}
 				}
 			}
 		}
-		(propositions, fragments)
-	}
 
-	fn repr<'a>(&self, input: &'a str) -> &'a str {
-		let span = match self {
-			Self::Proposition(span, ..) | Self::Unary(span, ..) | Self::Binary(span, ..) => span,
-		};
-		&input[span.clone()]
+		(propositions, fragments)
 	}
 
 	fn evaluate(&self, context: &HashMap<&str, bool>) -> bool {
@@ -104,9 +119,32 @@ impl Ast {
 			}
 		}
 	}
+
+	fn map_span<S2>(self, mut f: impl FnMut(S) -> S2) -> Ast<S2> {
+		fn go<S, S2>(ast: Ast<S>, f: &mut impl FnMut(S) -> S2) -> Ast<S2> {
+			match ast {
+				Ast::Proposition(span, proposition) => Ast::Proposition(f(span), proposition),
+				Ast::Unary(span, op, child) => Ast::Unary(f(span), op, Box::new(go(*child, f))),
+				Ast::Binary(span, op, children) => Ast::Binary(
+					f(span),
+					op,
+					Box::new((go(children.0, f), go(children.1, f))),
+				),
+			}
+		}
+		go(self, &mut f)
+	}
 }
 
-fn binary_op() -> impl Parser<char, BinaryOperator, Error = Simple<char>> {
+impl Ast<String> {
+	fn repr(&self) -> &str {
+		match self {
+			Self::Proposition(span, ..) | Self::Unary(span, ..) | Self::Binary(span, ..) => span,
+		}
+	}
+}
+
+fn binary_op() -> impl Parser<char, BinaryOperator, Error = Error> {
 	choice((
 		just("&").to(BinaryOperator::And),
 		just("|").to(BinaryOperator::Or),
@@ -117,11 +155,11 @@ fn binary_op() -> impl Parser<char, BinaryOperator, Error = Simple<char>> {
 	.padded()
 }
 
-fn unary_op() -> impl Parser<char, UnaryOperator, Error = Simple<char>> {
+fn unary_op() -> impl Parser<char, UnaryOperator, Error = Error> {
 	just("!").to(UnaryOperator::Not).padded()
 }
 
-fn parser() -> impl Parser<char, Ast, Error = Simple<char>> {
+fn parser() -> impl Parser<char, Ast<Span>, Error = Error> {
 	recursive(|expr0| {
 		let expr2 = choice((
 			text::ident()
@@ -143,14 +181,25 @@ fn parser() -> impl Parser<char, Ast, Error = Simple<char>> {
 }
 
 fn main() {
-	let expr = std::env::args()
-		.nth(1)
-		.expect("pass expression as the first argument");
-	let parsed = parser()
-		.parse(expr.as_str())
-		.expect("parsing expression failed");
+	let exprs: Vec<_> = std::env::args()
+		.skip(1)
+		.map(|expr| (parser().parse(expr.as_str()).expect("parsing failed"), expr))
+		.map(|(ast, raw)| {
+			ast.map_span(|span| {
+				raw[span]
+					.replace('&', r"\wedge")
+					.replace('|', r"\vee")
+					.replace('^', r"\oplus")
+					.replace('!', r"\neg")
+					.replace("<->", r"\leftrightarrow") // must be before `->` replacement
+					.replace("->", r"\rightarrow")
+					.replace('(', r"\left( ")
+					.replace(')', r" \right)")
+			})
+		})
+		.collect();
 
-	let (propositions, fragments) = parsed.split_for_table();
+	let (propositions, fragments) = Ast::split_for_table(&exprs);
 
 	let num_propositions = propositions.len();
 	let mut counter = (1 << num_propositions) - 1; // `num_propositions` 1s
@@ -159,7 +208,6 @@ fn main() {
 	print_header(
 		propositions.iter().copied(),
 		fragments.iter().rev().copied(),
-		&expr,
 	);
 
 	while counter >= 0 {
@@ -183,8 +231,7 @@ fn main() {
 
 fn print_header<'a>(
 	propositions: impl Iterator<Item = &'a str> + ExactSizeIterator,
-	fragments: impl Iterator<Item = &'a Ast> + ExactSizeIterator,
-	input: &str,
+	fragments: impl Iterator<Item = &'a Ast<String>> + ExactSizeIterator,
 ) {
 	let num_propositions = propositions.len();
 	let num_fragments = fragments.len();
@@ -199,16 +246,7 @@ fn print_header<'a>(
 		print!("${proposition}$ & ");
 	}
 	for (i, fragment) in fragments.enumerate() {
-		let repr = fragment
-			.repr(input)
-			.replace('&', r"\wedge")
-			.replace('|', r"\vee")
-			.replace('^', r"\oplus")
-			.replace('!', r"\neg")
-			.replace("<->", r"\leftrightarrow") // must be before `->` replacement
-			.replace("->", r"\rightarrow")
-			.replace('(', r"\left( ")
-			.replace(')', r" \right)");
+		let repr = fragment.repr();
 		print!("${}$", repr);
 		if i == num_fragments - 1 {
 			println!(r"\\");
@@ -220,7 +258,7 @@ fn print_header<'a>(
 
 fn print_row<'a>(
 	propositions: impl Iterator<Item = &'a str>,
-	fragments: impl Iterator<Item = &'a Ast> + ExactSizeIterator,
+	fragments: impl Iterator<Item = &'a Ast<String>> + ExactSizeIterator,
 	context: &HashMap<&str, bool>,
 ) {
 	let num_fragments = fragments.len();
