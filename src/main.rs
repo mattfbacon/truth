@@ -19,6 +19,7 @@
 #![forbid(unsafe_code)]
 
 use std::collections::{BTreeSet, HashMap};
+use std::fmt::{self, Display, Formatter};
 use std::ops::Range;
 
 use chumsky::prelude::*;
@@ -34,6 +35,14 @@ impl UnaryOperator {
 		match self {
 			Self::Not => !b,
 		}
+	}
+}
+
+impl Display for UnaryOperator {
+	fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+		formatter.write_str(match self {
+			Self::Not => r"\neg",
+		})
 	}
 }
 
@@ -62,30 +71,32 @@ impl BinaryOperator {
 	}
 }
 
+impl Display for BinaryOperator {
+	fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+		formatter.write_str(match self {
+			Self::And => r"\wedge",
+			Self::Or => r"\vee",
+			Self::Xor => r"\oplus",
+			Self::If => r"\rightarrow",
+			Self::IfAndOnlyIf => r"\leftrightarrow",
+			Self::Nand => r"\mid",
+			Self::Nor => r"\downarrow",
+		})
+	}
+}
+
 type Span = Range<usize>;
 type Error = Simple<char, Span>;
 
-#[derive(Debug, Clone, derivative::Derivative)]
-#[derivative(PartialEq, Eq, Hash)]
-enum Ast<S> {
-	Proposition(
-		#[derivative(PartialEq = "ignore", Hash = "ignore")] S,
-		String,
-	),
-	Unary(
-		#[derivative(PartialEq = "ignore", Hash = "ignore")] S,
-		UnaryOperator,
-		Box<Self>,
-	),
-	Binary(
-		#[derivative(PartialEq = "ignore", Hash = "ignore")] S,
-		BinaryOperator,
-		Box<(Self, Self)>,
-	),
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum Ast {
+	Proposition(String),
+	Unary(UnaryOperator, Box<Self>),
+	Binary(BinaryOperator, Box<(Self, Self)>),
 }
 
-impl<S> Ast<S> {
-	fn split_for_table<'a, I: Iterator<Item = &'a Ast<S>> + DoubleEndedIterator>(
+impl Ast {
+	fn split_for_table<'a, I: Iterator<Item = &'a Self> + DoubleEndedIterator>(
 		asts: impl IntoIterator<IntoIter = I>,
 	) -> (BTreeSet<&'a str>, IndexSet<&'a Self>) {
 		let mut fragments = IndexSet::new();
@@ -96,14 +107,14 @@ impl<S> Ast<S> {
 			let mut stack: Vec<_> = vec![ast];
 			while let Some(node) = stack.pop() {
 				match node {
-					Self::Proposition(_span, proposition) => {
-						propositions.insert(proposition);
+					Self::Proposition(proposition) => {
+						propositions.insert(proposition.as_str());
 					}
-					Self::Unary(_span, _op, child) => {
+					Self::Unary(_op, child) => {
 						fragments.insert(node);
 						stack.push(child);
 					}
-					Self::Binary(_span, _op, children) => {
+					Self::Binary(_op, children) => {
 						fragments.insert(node);
 						stack.extend([&children.0, &children.1]);
 					}
@@ -116,34 +127,44 @@ impl<S> Ast<S> {
 
 	fn evaluate(&self, context: &HashMap<&str, bool>) -> bool {
 		match self {
-			Self::Proposition(_span, proposition) => context[proposition.as_str()],
-			Self::Unary(_span, op, child) => op.apply(child.evaluate(context)),
-			Self::Binary(_span, op, children) => {
+			Self::Proposition(proposition) => context[proposition.as_str()],
+			Self::Unary(op, child) => op.apply(child.evaluate(context)),
+			Self::Binary(op, children) => {
 				op.apply(children.0.evaluate(context), children.1.evaluate(context))
 			}
 		}
 	}
-
-	fn map_span<S2>(self, mut f: impl FnMut(S) -> S2) -> Ast<S2> {
-		fn go<S, S2>(ast: Ast<S>, f: &mut impl FnMut(S) -> S2) -> Ast<S2> {
-			match ast {
-				Ast::Proposition(span, proposition) => Ast::Proposition(f(span), proposition),
-				Ast::Unary(span, op, child) => Ast::Unary(f(span), op, Box::new(go(*child, f))),
-				Ast::Binary(span, op, children) => Ast::Binary(
-					f(span),
-					op,
-					Box::new((go(children.0, f), go(children.1, f))),
-				),
-			}
-		}
-		go(self, &mut f)
-	}
 }
 
-impl Ast<String> {
-	fn repr(&self) -> &str {
+impl Display for Ast {
+	fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
 		match self {
-			Self::Proposition(span, ..) | Self::Unary(span, ..) | Self::Binary(span, ..) => span,
+			Self::Binary(op, children) => {
+				let (left, right) = &**children;
+				if matches!(left, Self::Binary(..)) {
+					write!(formatter, r"\left({left}\right)")?;
+				} else {
+					write!(formatter, "{left}")?;
+				}
+				write!(formatter, " {op} ")?;
+				if matches!(right, Self::Binary(..)) {
+					write!(formatter, r"\left({right}\right)")?;
+				} else {
+					write!(formatter, "{right}")?;
+				}
+				Ok(())
+			}
+			Self::Unary(op, child) => {
+				write!(formatter, "{op} ")?;
+				let child: &Self = child;
+				if matches!(child, Self::Binary(..)) {
+					write!(formatter, r"\left({child}\right)")?;
+				} else {
+					write!(formatter, "{child}")?;
+				}
+				Ok(())
+			}
+			Self::Proposition(proposition) => formatter.write_str(proposition),
 		}
 	}
 }
@@ -165,23 +186,23 @@ fn unary_op() -> impl Parser<char, UnaryOperator, Error = Error> {
 	just("!").to(UnaryOperator::Not).padded()
 }
 
-fn parser() -> impl Parser<char, Ast<Span>, Error = Error> {
+fn parser() -> impl Parser<char, Ast, Error = Error> {
 	recursive(|expr0| {
 		let expr2 = choice((
-			text::ident().map_with_span(|name, span| Ast::Proposition(span, name)),
+			text::ident().map(Ast::Proposition),
 			expr0.clone().delimited_by(just("("), just(")")).padded(),
 		))
 		.padded();
 		let expr1 = || {
 			unary_op()
 				.then(expr2.clone())
-				.map_with_span(|(op, child), span| Ast::Unary(span, op, Box::new(child)))
+				.map(|(op, child)| Ast::Unary(op, Box::new(child)))
 				.or(expr2.clone())
 		};
 		expr1()
 			.then(binary_op().then(expr1()).map(Some).or(empty().to(None)))
-			.map_with_span(|(left, right), span| match right {
-				Some((op, right)) => Ast::Binary(span, op, Box::new((left, right))),
+			.map(|(left, right)| match right {
+				Some((op, right)) => Ast::Binary(op, Box::new((left, right))),
 				None => left,
 			})
 	})
@@ -190,22 +211,7 @@ fn parser() -> impl Parser<char, Ast<Span>, Error = Error> {
 fn main() {
 	let exprs: Vec<_> = std::env::args()
 		.skip(1)
-		.map(|expr| (parser().parse(expr.as_str()).expect("parsing failed"), expr))
-		.map(|(ast, raw)| {
-			ast.map_span(|span| {
-				raw[span]
-					.replace('&', r"\wedge ")
-					.replace('|', r"\vee ")
-					.replace('^', r"\oplus ")
-					.replace('!', r"\neg ")
-					.replace("<->", r"\leftrightarrow ") // must be before `->` replacement
-					.replace("->", r"\rightarrow ")
-					.replace('(', r"\left( ")
-					.replace(')', r" \right)")
-					.replace("NAND", r"\mid ")
-					.replace("NOR", r"\downarrow ")
-			})
-		})
+		.map(|expr| parser().parse(expr.as_str()).expect("parsing failed"))
 		.collect();
 
 	let (propositions, fragments) = Ast::split_for_table(&exprs);
@@ -240,7 +246,7 @@ fn main() {
 
 fn print_header<'a>(
 	propositions: impl Iterator<Item = &'a str> + ExactSizeIterator,
-	fragments: impl Iterator<Item = &'a Ast<String>> + ExactSizeIterator,
+	fragments: impl Iterator<Item = &'a Ast> + ExactSizeIterator,
 ) {
 	let num_propositions = propositions.len();
 	let num_fragments = fragments.len();
@@ -259,7 +265,7 @@ fn print_header<'a>(
 		print!("${proposition}$ & ");
 	}
 	for (i, fragment) in fragments.enumerate() {
-		let repr = fragment.repr();
+		let repr = fragment.to_string();
 		print!("${}$", repr);
 		if i == num_fragments - 1 {
 			println!(r" \\");
@@ -271,7 +277,7 @@ fn print_header<'a>(
 
 fn print_row<'a>(
 	propositions: impl Iterator<Item = &'a str>,
-	fragments: impl Iterator<Item = &'a Ast<String>> + ExactSizeIterator,
+	fragments: impl Iterator<Item = &'a Ast> + ExactSizeIterator,
 	context: &HashMap<&str, bool>,
 ) {
 	let num_fragments = fragments.len();

@@ -5,5 +5,4 @@ version = "0.1.0"
 
 [dependencies]
 chumsky = "0.8"
-derivative = "2"
 indexmap = "1"
