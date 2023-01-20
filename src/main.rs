@@ -200,7 +200,7 @@ fn parser() -> impl Parser<char, Ast, Error = Error> {
 				.or(expr2.clone())
 		};
 		expr1()
-			.then(binary_op().then(expr1()).map(Some).or(empty().to(None)))
+			.then(binary_op().then(expr1()).or_not())
 			.map(|(left, right)| match right {
 				Some((op, right)) => Ast::Binary(op, Box::new((left, right))),
 				None => left,
