@@ -266,7 +266,7 @@ fn print_header<'a>(
 	}
 	for (i, fragment) in fragments.enumerate() {
 		let repr = fragment.to_string();
-		print!("${}$", repr);
+		print!("${repr}$");
 		if i == num_fragments - 1 {
 			println!(r" \\");
 		} else {
